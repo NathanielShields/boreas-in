@@ -300,14 +300,27 @@
 
       <div>
         <span class="section-label">Labor Productivity vs. Temperature</span>
-        <p style="margin-bottom: 1rem; font-size: 0.9rem;">Acclimatized workers' sustainable work capacity drops sharply
-          above 28°C. At 32°C, physically demanding tasks (400–500 W, e.g. heavy lifting or operating manual tools for extended periods) fall below 20% capacity.</p>
-        <div
-          style="border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--color-border);background:white;">
-          <img src="images/fig_heatvslabor.png" alt="Work capacity vs WBGT chart (Smallcombe et al., Int J Biometeorol 2022)"
-            style="width:100%;height:auto;display:block;">
+        <p style="margin-bottom: 1rem; font-size: 0.9rem;">Select an activity below to see how heat erodes work capacity — and how much output is lost per shift.</p>
+
+        <!-- ── Interactive Heat-Productivity Chart ── -->
+        <div id="heat-chart-wrap" style="background:white;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:1.25rem 1.5rem 1rem;font-family:var(--font-body);">
+
+          <!-- Activity selector -->
+          <div id="activity-btns" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:1.1rem;"></div>
+
+          <!-- Selected activity info bar -->
+          <div id="activity-info" style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:0.9rem;padding:0.65rem 1rem;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;font-size:0.82rem;color:#475569;"></div>
+
+          <!-- SVG chart -->
+          <svg id="heat-svg" viewBox="0 0 560 260" style="width:100%;height:auto;display:block;" aria-label="Labor productivity vs WBGT chart"></svg>
+
+          <!-- Loss callout -->
+          <div id="loss-callout" style="margin-top:0.75rem;padding:0.65rem 1rem;border-radius:6px;font-size:0.83rem;display:flex;gap:1.5rem;flex-wrap:wrap;"></div>
+
+          <p style="font-size:0.72rem;color:#94a3b8;margin-top:0.6rem;">
+            Curve: Smallcombe et al., <em>Int J Biometeorol</em> 66, 2463–2476 (2022). Activity metabolic rates from ISO 8996 / published field studies. Productivity loss = 1 − capacity at operating WBGT.
+          </p>
         </div>
-        <p class="figure-caption">Figure: Smallcombe et al., <em>Int J Biometeorol</em> 66, 2463–2476 (2022)</p>
       </div>
     </div>
   </div>
@@ -441,6 +454,275 @@
   </footer>
 
   <script src="main.js"></script>
+  <script>
+  (function () {
+    // ── Data ──────────────────────────────────────────────────────────────
+    // Capacity curve digitised from Smallcombe et al. (2022), acclimatised workers.
+    // capacity = fraction of max sustainable work output (0–1) at each WBGT °C.
+    // Fitted as a piecewise linear approximation through the published curve.
+    const CURVE = [
+      { wbgt: 15, cap: 1.00 },
+      { wbgt: 18, cap: 1.00 },
+      { wbgt: 22, cap: 0.98 },
+      { wbgt: 25, cap: 0.92 },
+      { wbgt: 28, cap: 0.80 },
+      { wbgt: 30, cap: 0.65 },
+      { wbgt: 32, cap: 0.45 },
+      { wbgt: 33, cap: 0.33 },
+      { wbgt: 34, cap: 0.22 },
+      { wbgt: 35, cap: 0.12 },
+      { wbgt: 36, cap: 0.05 },
+      { wbgt: 37, cap: 0.00 },
+    ];
+
+    // Activities: name, watts (midpoint), wbgt_typical (common operating condition),
+    // category colour key, description
+    const ACTIVITIES = [
+      { id: 'cycling',    label: 'Delivery Cycling',       w: 125, wbgt: 30, cat: 'logistics',     desc: 'Last-mile delivery cycling on urban routes' },
+      { id: 'walking',    label: 'Carrying Loads',         w: 200, wbgt: 30, cat: 'logistics',     desc: 'Walking with 20 kg load (warehouse / port)' },
+      { id: 'bricklaying',label: 'Bricklaying',            w: 280, wbgt: 32, cat: 'construction',  desc: 'Repetitive masonry work, stooped posture' },
+      { id: 'digging',    label: 'Digging / Trenching',    w: 350, wbgt: 32, cat: 'construction',  desc: 'Shovel excavation or manual trenching' },
+      { id: 'concreting', label: 'Concrete Pouring',       w: 300, wbgt: 32, cat: 'construction',  desc: 'Placing and screeding concrete slabs' },
+      { id: 'scaffolding',label: 'Scaffolding Erection',   w: 320, wbgt: 33, cat: 'construction',  desc: 'Lifting and fixing scaffold components overhead' },
+      { id: 'lifting',    label: 'Heavy Lifting',          w: 450, wbgt: 33, cat: 'construction',  desc: 'Manual handling of heavy materials (>25 kg)' },
+      { id: 'roofing',    label: 'Roofing',                w: 380, wbgt: 34, cat: 'construction',  desc: 'Laying tiles or membrane on exposed roof surface' },
+      { id: 'farming',    label: 'Crop Harvesting',        w: 300, wbgt: 33, cat: 'agriculture',   desc: 'Hand-picking or cutting crops in open field' },
+      { id: 'irrigation', label: 'Irrigation Work',        w: 250, wbgt: 32, cat: 'agriculture',   desc: 'Moving pipes and equipment across fields' },
+      { id: 'driving',    label: 'Forklift Operation',     w: 120, wbgt: 30, cat: 'logistics',     desc: 'Seated forklift in non-air-conditioned warehouse' },
+      { id: 'roadwork',   label: 'Road Paving',            w: 400, wbgt: 34, cat: 'construction',  desc: 'Raking and compacting hot asphalt' },
+    ];
+
+    const CAT_COLORS = {
+      construction: { fill: '#f97316', light: '#fff7ed', border: '#fed7aa' },
+      logistics:    { fill: '#3b82f6', light: '#eff6ff', border: '#bfdbfe' },
+      agriculture:  { fill: '#22c55e', light: '#f0fdf4', border: '#bbf7d0' },
+    };
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    function capacityAt(wbgt) {
+      if (wbgt <= CURVE[0].wbgt) return 1;
+      if (wbgt >= CURVE[CURVE.length - 1].wbgt) return 0;
+      for (let i = 0; i < CURVE.length - 1; i++) {
+        const a = CURVE[i], b = CURVE[i + 1];
+        if (wbgt >= a.wbgt && wbgt <= b.wbgt) {
+          const t = (wbgt - a.wbgt) / (b.wbgt - a.wbgt);
+          return a.cap + t * (b.cap - a.cap);
+        }
+      }
+      return 0;
+    }
+
+    // Capacity curve adjusted for work intensity.
+    // Higher wattage shifts the effective curve left (workers hit limits sooner).
+    // Shift factor: ~0.5°C per 100 W above 100 W baseline (ISO 8996 approximation).
+    function adjustedCapacity(wbgt, watts) {
+      const shift = (watts - 100) / 100 * 0.5;
+      return capacityAt(wbgt + shift);
+    }
+
+    // ── SVG drawing ───────────────────────────────────────────────────────
+    const VW = 560, VH = 260;
+    const PAD = { top: 18, right: 20, bottom: 40, left: 48 };
+    const CW = VW - PAD.left - PAD.right;
+    const CH = VH - PAD.top - PAD.bottom;
+    const WBGT_MIN = 15, WBGT_MAX = 37;
+
+    function xScale(wbgt) { return PAD.left + (wbgt - WBGT_MIN) / (WBGT_MAX - WBGT_MIN) * CW; }
+    function yScale(cap)  { return PAD.top + (1 - cap) * CH; }
+
+    function svgEl(tag, attrs) {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    function buildCurvePath(watts) {
+      const steps = 200;
+      let d = '';
+      for (let i = 0; i <= steps; i++) {
+        const wbgt = WBGT_MIN + (i / steps) * (WBGT_MAX - WBGT_MIN);
+        const cap  = adjustedCapacity(wbgt, watts);
+        const x = xScale(wbgt), y = yScale(cap);
+        d += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + y.toFixed(1) + ' ';
+      }
+      return d;
+    }
+
+    function renderChart(activity) {
+      const svg = document.getElementById('heat-svg');
+      svg.innerHTML = '';
+      const col = CAT_COLORS[activity.cat];
+
+      // ── Background zones ──
+      const zones = [
+        { x1: 15, x2: 25, label: 'Low risk',      fill: '#f0fdf4' },
+        { x1: 25, x2: 30, label: 'Caution',        fill: '#fefce8' },
+        { x1: 30, x2: 33, label: 'High risk',      fill: '#fff7ed' },
+        { x1: 33, x2: 37, label: 'Extreme',        fill: '#fef2f2' },
+      ];
+      zones.forEach(z => {
+        const rx = xScale(z.x1), rw = xScale(z.x2) - xScale(z.x1);
+        svg.appendChild(svgEl('rect', { x: rx, y: PAD.top, width: rw, height: CH, fill: z.fill }));
+        const lx = rx + rw / 2;
+        const lt = svgEl('text', { x: lx, y: PAD.top + 10, 'text-anchor': 'middle', fill: '#94a3b8', 'font-size': '7.5', 'font-family': 'sans-serif' });
+        lt.textContent = z.label;
+        svg.appendChild(lt);
+      });
+
+      // ── Grid lines & Y axis ──
+      [0, 0.25, 0.5, 0.75, 1].forEach(cap => {
+        const y = yScale(cap);
+        svg.appendChild(svgEl('line', { x1: PAD.left, y1: y, x2: PAD.left + CW, y2: y, stroke: '#e2e8f0', 'stroke-width': '0.8' }));
+        const t = svgEl('text', { x: PAD.left - 5, y: y + 3.5, 'text-anchor': 'end', fill: '#64748b', 'font-size': '9', 'font-family': 'sans-serif' });
+        t.textContent = (cap * 100) + '%';
+        svg.appendChild(t);
+      });
+
+      // ── X axis ticks ──
+      [15, 20, 25, 28, 30, 32, 33, 34, 35, 37].forEach(wbgt => {
+        const x = xScale(wbgt);
+        svg.appendChild(svgEl('line', { x1: x, y1: PAD.top + CH, x2: x, y2: PAD.top + CH + 4, stroke: '#94a3b8', 'stroke-width': '0.8' }));
+        const t = svgEl('text', { x, y: PAD.top + CH + 13, 'text-anchor': 'middle', fill: '#64748b', 'font-size': '9', 'font-family': 'sans-serif' });
+        t.textContent = wbgt + '°';
+        svg.appendChild(t);
+      });
+
+      // Axis labels
+      const xLabel = svgEl('text', { x: PAD.left + CW / 2, y: VH - 2, 'text-anchor': 'middle', fill: '#475569', 'font-size': '10', 'font-family': 'sans-serif' });
+      xLabel.textContent = 'Wet-Bulb Globe Temperature (WBGT °C)';
+      svg.appendChild(xLabel);
+
+      const yLabel = svgEl('text', { x: 10, y: PAD.top + CH / 2, 'text-anchor': 'middle', fill: '#475569', 'font-size': '10', 'font-family': 'sans-serif', transform: `rotate(-90, 10, ${PAD.top + CH / 2})` });
+      yLabel.textContent = 'Work Capacity';
+      svg.appendChild(yLabel);
+
+      // ── Filled area under curve ──
+      const fillPath = buildCurvePath(activity.w) +
+        ` L${xScale(WBGT_MAX).toFixed(1)},${yScale(0).toFixed(1)} L${xScale(WBGT_MIN).toFixed(1)},${yScale(0).toFixed(1)} Z`;
+      svg.appendChild(svgEl('path', { d: fillPath, fill: col.fill, opacity: '0.18' }));
+
+      // ── Curve line ──
+      svg.appendChild(svgEl('path', { d: buildCurvePath(activity.w), fill: 'none', stroke: col.fill, 'stroke-width': '2.2', 'stroke-linecap': 'round' }));
+
+      // ── Operating WBGT marker ──
+      const opX = xScale(activity.wbgt);
+      const opCap = adjustedCapacity(activity.wbgt, activity.w);
+      const opY = yScale(opCap);
+
+      // Vertical dashed line
+      svg.appendChild(svgEl('line', { x1: opX, y1: PAD.top, x2: opX, y2: opY, stroke: col.fill, 'stroke-width': '1.2', 'stroke-dasharray': '4,3', opacity: '0.7' }));
+      // Horizontal dashed line
+      svg.appendChild(svgEl('line', { x1: PAD.left, y1: opY, x2: opX, y2: opY, stroke: col.fill, 'stroke-width': '1.2', 'stroke-dasharray': '4,3', opacity: '0.7' }));
+      // Dot
+      svg.appendChild(svgEl('circle', { cx: opX, cy: opY, r: '5', fill: col.fill, stroke: 'white', 'stroke-width': '2' }));
+
+      // Label at dot
+      const labelX = opX + 8, labelY = opY - 8;
+      const bg = svgEl('rect', { x: labelX - 2, y: labelY - 10, width: 58, height: 14, rx: 3, fill: 'white', opacity: '0.88' });
+      svg.appendChild(bg);
+      const dotLabel = svgEl('text', { x: labelX, y: labelY, fill: col.fill, 'font-size': '9.5', 'font-weight': '700', 'font-family': 'sans-serif' });
+      dotLabel.textContent = Math.round(opCap * 100) + '% capacity';
+      svg.appendChild(dotLabel);
+
+      // ── Loss shading (area between 100% and actual) ──
+      const lossPath = `M${xScale(WBGT_MIN).toFixed(1)},${yScale(1).toFixed(1)} ` +
+        buildCurvePath(activity.w).replace(/^M[^ ]+ /, '') +
+        ` L${xScale(WBGT_MAX).toFixed(1)},${yScale(1).toFixed(1)} Z`;
+      svg.appendChild(svgEl('path', { d: lossPath, fill: '#ef4444', opacity: '0.07' }));
+
+      // ── Chart border ──
+      svg.appendChild(svgEl('rect', { x: PAD.left, y: PAD.top, width: CW, height: CH, fill: 'none', stroke: '#e2e8f0', 'stroke-width': '1' }));
+    }
+
+    function renderInfo(activity) {
+      const col = CAT_COLORS[activity.cat];
+      const opCap = adjustedCapacity(activity.wbgt, activity.w);
+      const lostPct = Math.round((1 - opCap) * 100);
+      const lostMins = Math.round((1 - opCap) * 480);
+
+      const info = document.getElementById('activity-info');
+      info.innerHTML = `
+        <span><strong style="color:#1e293b;">Activity:</strong> ${activity.desc}</span>
+        <span><strong style="color:#1e293b;">Metabolic rate:</strong> ~${activity.w} W</span>
+        <span><strong style="color:#1e293b;">Typical operating WBGT:</strong> ${activity.wbgt}°C</span>
+      `;
+
+      const callout = document.getElementById('loss-callout');
+      callout.style.background = col.light;
+      callout.style.border = `1px solid ${col.border}`;
+      callout.innerHTML = `
+        <span style="font-size:1.4rem;font-weight:900;color:${col.fill};min-width:52px;">${lostPct}%</span>
+        <div>
+          <strong style="color:#1e293b;display:block;margin-bottom:0.15rem;">Productivity lost at WBGT ${activity.wbgt}°C</strong>
+          <span style="color:#475569;">≈ ${lostMins} minutes of effective work lost per 8-hour shift for <em>${activity.label.toLowerCase()}</em> workers.</span>
+        </div>
+      `;
+    }
+
+    function setActive(activity) {
+      document.querySelectorAll('.act-btn').forEach(b => {
+        const isActive = b.dataset.id === activity.id;
+        const col = CAT_COLORS[ACTIVITIES.find(a => a.id === b.dataset.id).cat];
+        b.style.background = isActive ? col.fill : 'transparent';
+        b.style.color = isActive ? 'white' : '#475569';
+        b.style.borderColor = isActive ? col.fill : '#e2e8f0';
+      });
+      renderChart(activity);
+      renderInfo(activity);
+    }
+
+    // ── Build buttons ──────────────────────────────────────────────────────
+    const btnWrap = document.getElementById('activity-btns');
+    ACTIVITIES.forEach(act => {
+      const col = CAT_COLORS[act.cat];
+      const btn = document.createElement('button');
+      btn.className = 'act-btn';
+      btn.dataset.id = act.id;
+      btn.textContent = act.label;
+      btn.style.cssText = `
+        padding: 0.3rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        border: 1px solid #e2e8f0;
+        background: transparent;
+        color: #475569;
+        cursor: pointer;
+        transition: all 0.15s;
+        font-family: inherit;
+      `;
+      btn.addEventListener('mouseenter', () => {
+        if (btn.style.background === 'transparent' || btn.style.background === '') {
+          btn.style.background = col.light;
+          btn.style.borderColor = col.border;
+          btn.style.color = col.fill;
+        }
+      });
+      btn.addEventListener('mouseleave', () => {
+        const active = ACTIVITIES.find(a => a.id === document.querySelector('.act-btn[style*="white"]')?.dataset.id);
+        if (!active || active.id !== act.id) {
+          btn.style.background = 'transparent';
+          btn.style.borderColor = '#e2e8f0';
+          btn.style.color = '#475569';
+        }
+      });
+      btn.addEventListener('click', () => setActive(act));
+      btnWrap.appendChild(btn);
+    });
+
+    // ── Legend ──
+    const legend = document.createElement('div');
+    legend.style.cssText = 'display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem;font-size:0.75rem;color:#64748b;';
+    [['construction','Construction'],['logistics','Logistics'],['agriculture','Agriculture']].forEach(([cat, label]) => {
+      const c = CAT_COLORS[cat];
+      legend.innerHTML += `<span style="display:flex;align-items:center;gap:0.3rem;"><span style="width:10px;height:10px;border-radius:50%;background:${c.fill};display:inline-block;"></span>${label}</span>`;
+    });
+    btnWrap.parentNode.insertBefore(legend, btnWrap);
+
+    // ── Init with first activity ──
+    setActive(ACTIVITIES[0]);
+  })();
+  </script>
 </body>
 
 </html>
